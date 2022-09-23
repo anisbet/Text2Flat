@@ -283,8 +283,8 @@ def guess_first_name(list_in: list) -> list:
 # param: 
 def check_name(name_corpus: str, test_input: list) -> int:
     corpus = open(name_corpus).readlines()
-    for i in test_input:
-        if any(i.upper() in s for s in corpus):
+    for i in range(len(test_input)):
+        if any(test_input[i].upper() in s for s in corpus):
             return i
     return -1
 

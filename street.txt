@@ -158,7 +158,8 @@ Cres
 Crest
 Crst
 Crossing
-CrssngXing
+Crssng
+Xing
 Crossroad
 Xrd
 Curve
@@ -197,7 +198,8 @@ Fall
 Falls
 Fls
 Ferry
-FrryFry
+Frry
+Fry
 Field
 Fld
 Fields
@@ -213,7 +215,8 @@ Frds
 Forest
 Frst
 Forge
-ForgFrg
+Forg
+Frg
 Forges
 Frgs
 Fork
@@ -221,7 +224,8 @@ Frk
 Forks
 Frks
 Fort
-FrtFt
+Frt
+Ft
 Freeway
 Freewy
 Frway
@@ -296,7 +300,8 @@ Ky
 Keys
 Kys
 Knoll
-KnolKnl
+Knol
+Knl
 Knolls
 Knls
 Lake
@@ -305,7 +310,8 @@ Lakes
 Lks
 Land
 Landing
-LndngLndg
+Lndng
+Lndg
 Lane
 Ln
 Light
@@ -385,7 +391,8 @@ Pln
 Plains
 Plns
 Plaza
-PlzaPlz
+Plza
+Plz
 Point
 Pt
 Points

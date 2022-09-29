@@ -416,6 +416,7 @@ Rdg
 Ridges
 Rdgs
 River
+RR
 Rvr
 Rivr
 Riv

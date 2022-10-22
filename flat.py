@@ -25,6 +25,7 @@ def printError(*args, **kwargs):
 class FlatWriter:
     def __init__(self):
         self.customersJson = []
+        self.minimumFields = 3
         self.symphonyTags = {
             "userId" : "USER_ID",                        # 21221012345678
             "userGroupId" : "USER_GROUP_ID",             # 
@@ -104,8 +105,8 @@ class FlatWriter:
             "email" :      "email",
             "phone" :      "phone",
             "street" :     "street",
-            "city" :       "citySlashProv",
-            "province" :   "cityProv",
+            "city" :       "citySlashState", # TODO: put these together
+            "province" :   "citySlashState",
             "country" :    "country",
             "postalcode" : "postalcode",
             "barcode" :    "userId",
@@ -115,7 +116,7 @@ class FlatWriter:
             "branch" :     "userLibrary",
             "status" :     "userStatus",
             "careOf" :     "careSlashOf",
-            "notes" :      "note"
+            "note" :       "note"
         }
 
         # Arrays of address and extended info blocks. Extend for addr2 and addr3
@@ -132,7 +133,8 @@ class FlatWriter:
             "city" : self.addr1,
             "email" : self.addr1,
             "careSlashOf" : self.addr1,
-            "notes" : self.xinfo,
+            "careOf" : self.addr1,
+            "note" : self.xinfo,
             "notifyVia" : self.xinfo,
             "retrnmail" : self.xinfo
         }
@@ -141,14 +143,11 @@ class FlatWriter:
         # Common messages required when processing Flat data.
         # 
         self._messages_ = {
-            'noJson' : 'Customer json data empty or missing.',
-            'noFlatContainer' : 'Flat container missing.',
+            'noJson' : 'Malformed or empty customer data.',
             'invalidDate' : 'contains an invalid date.',
-            'missingFlatData' : 'Expected an array of flat data to output.',
-            'errorFileClose' : 'Failed to close flat file.',
             'errorFileWrite' : 'Failed to write flat data to file.',
             'errorFileOpen' : 'Failed to open flat file for writing.',
-            'invalidSymphonyTag' : 'Failed to update flatDefaults with tag ',
+            'invalidSymphonyTag' : 'Invalid Symphony tag ',
             'unknownJsonTag' : 'Customer data includes unknown tag '
         }
 
@@ -159,7 +158,7 @@ class FlatWriter:
     def getCustomerTags(self):
         """
         >>> FlatWriter().getCustomerTags()
-        ['userId', 'profile', 'firstName', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'notes']
+        ['userId', 'profile', 'firstName', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'note']
         """
         return list(self._tagMap_.keys())
 
@@ -175,11 +174,11 @@ class FlatWriter:
         >>> f.renameCustomerField('firstName','nom')
         True
         >>> f.getCustomerTags()
-        ['userId', 'profile', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'notes', 'nom']
+        ['userId', 'profile', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'note', 'nom']
         >>> f.renameCustomerField('Buffalo', 'nom')
         False
         >>> f.getCustomerTags()
-        ['userId', 'profile', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'notes', 'nom']
+        ['userId', 'profile', 'lastName', 'middleName', 'birthday', 'gender', 'email', 'phone', 'street', 'city', 'province', 'country', 'postalcode', 'barcode', 'pin', 'type', 'expiry', 'branch', 'status', 'careOf', 'note', 'nom']
         >>> f.renameCustomerField('this','that')
         False
         >>> f.renameCustomerField(None,None)
@@ -253,9 +252,19 @@ class FlatWriter:
 
     # Appends customer JSON data to the list of customers to output in the flat file.
     # param: customer JSON - dict
+    # Return: True if the customer data was added and False if there wasn't 
+    #   enough data to create a thin file
     def appendCustomer(self,customerJSON:dict):
-        if customerJSON != None and len(customerJSON) > 0:
-            self.customersJson.append(customerJSON)
+        if customerJSON == None or len(customerJSON) < self.minimumFields:
+            printError(self._messages_['noJson'])
+            return False
+        for defaultKey in self._defaults_.keys():
+            # Add the defaults, but only if they are not set in the customer data
+            if customerJSON.get(defaultKey) == None:
+                customerJSON[defaultKey] = self._defaults_.get(defaultKey)
+        self.customersJson.append(customerJSON)
+        return True
+
     # 
     # Converts customer data to flat data. The returned ojbect is also json which can be
     # sent to file with the write() function.
@@ -267,7 +276,7 @@ class FlatWriter:
     # 
     def toFlat(self):
         """
-        >>> custJson = {'firstName': 'Lewis','middleName': 'Fastest','lastName': 'Hamilton', 'birthday': '1974-08-22', 'gender': 'MALE', 'email': 'example@gmail.com', 'phone': '780-555-1212', 'street': '11535 74 Ave.', 'city': 'Edmonton', 'province': 'AB', 'country': '', 'postalcode': 'T6G0G9','barcode': '1101223334444', 'pin': 'IlikeBread', 'type': 'MAC-DSSTUD', 'expiry': '2021-08-22','careOf': 'Doe, John','branch': 'EPLWMC', 'status': 'OK', 'notes': 'Hi' }
+        >>> custJson = {'firstName': 'Lewis','middleName': 'Fastest','lastName': 'Hamilton', 'birthday': '1974-08-22', 'gender': 'MALE', 'email': 'example@gmail.com', 'phone': '780-555-1212', 'street': '11535 74 Ave.', 'city': 'Edmonton', 'province': 'AB', 'postalcode': 'T6G0G9','barcode': '1101223334444', 'pin': 'IlikeBread', 'type': 'MAC-DSSTUD', 'expiry': '2021-08-22','careOf': 'Doe, John','branch': 'EPLWMC', 'status': 'OK', 'note': 'Hi' }
         >>> f = FlatWriter()
         >>> f.appendCustomer(custJson)
         >>> f.toFlat()
@@ -303,16 +312,6 @@ class FlatWriter:
         .RETRNMAIL.   |aYES
         .USER_XINFO_END.
         """
-        #  
-        # TODO: Add the defaults before the blocks.
-        # But first update the default Symphony fields.
-        # 
-        # TODO: Add block
-        #  Add the block data.# 
-        # addr1 = {}
-        #
-        # TODO: Add block
-        # xinfo = {}
         printError(f"processing flat files")
         totalErrors = 0
         for idx, customer in enumerate(self.customersJson):
@@ -320,44 +319,64 @@ class FlatWriter:
             print(f"*** DOCUMENT BOUNDARY ***")
             print(f"FORM=LDUSER")
             for customerField in customer.keys():
+                possibleBlock = self.blocks.get(customerField)
+                if possibleBlock != None:
+                    possibleBlock[customerField] = customer.get(customerField)
+                    continue
                 symphonyFieldName = self._tagMap_.get(customerField)
-                if symphonyFieldName != None:
-                    symphonyField = self.symphonyTags.get(symphonyFieldName)
-                    if symphonyField != None:
-                        print(f".{symphonyField}.   |a{customer.get(customerField)}")
-                    else:
-                        printError(f"**error, {self._messages_['invalidSymphonyTag']}")
-                        totalErrors += 1
-                        customerErrors += 1
-                else:
-                    printError(f"*warning, {self._messages_['unknownJsonTag']}: '{customerField}'")
+                if symphonyFieldName == None:
+                    # If the symphonyFieldName isn't in the customer data it means it is a default
+                    # system value.
+                    symphonyFieldName = customerField
+                symphonyField = self.symphonyTags.get(symphonyFieldName)
+                if symphonyField == None:
+                    printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{symphonyFieldName}")
                     totalErrors += 1
                     customerErrors += 1
-            else:
-                printError(f"customer {idx +1} output with {customerErrors} error(s)")
+                    continue
+                print(f".{symphonyField}.   |a{customer.get(customerField)}")
+            # Now print the blocks if they have any content.
+            if len(self.addr1) > 0:
+                print(f".{self.symphonyTags.get('userAddr1Begin')}.")
+                for key in self.addr1.keys():
+                    symphonyFieldName = self._tagMap_.get(key)
+                    # Again default tags are added, but not expected to be part of the customer data
+                    if symphonyFieldName == None:
+                        symphonyFieldName = key
+                    symphonyField = self.symphonyTags.get(symphonyFieldName)
+                    if symphonyField == None:
+                        printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
+                        totalErrors += 1
+                        customerErrors += 1
+                        continue
+                    print(f".{symphonyField}.   |a{self.addr1.get(key)}")
+                print(f".{self.symphonyTags.get('userAddr1End')}.")
+            if len(self.xinfo) > 0:
+                print(f".{self.symphonyTags.get('userXinfoBegin')}.")
+                for key in self.xinfo.keys():
+                    symphonyFieldName = self._tagMap_.get(key)
+                    if symphonyFieldName == None:
+                        symphonyFieldName = key
+                    symphonyField = self.symphonyTags.get(symphonyFieldName)
+                    if symphonyField == None:
+                        printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
+                        totalErrors += 1
+                        customerErrors += 1
+                        continue
+                    print(f".{symphonyField}.   |a{self.xinfo.get(key)}")
+                print(f".{self.symphonyTags.get('userXinfoEnd')}.")
+            printError(f"customer {idx +1} output with {customerErrors} error(s)")
         else:
             printError(f"processed {len(self.customersJson)} customer file(s) with {totalErrors} error(s)")
 
     # 
-    # Writes flat (json) data to a given file name or to stdout if a file name 
-    # is not provided.
+    # Writes flat customer data to file.
+    # param: fileName - str /path/to/file.flat
     # 
-    # Tests:
-    # Flat data exists and is complete and no file name provided write to stdout, resolve with success message.
-    # Flat data exists and is complete write to stream, resolve with success message.
-    # Flat data does not exist, or is invalid reject with message.
-    # 
-    # @param {*} flatCustomer a Customer object which includes 'data':[]
-    # and 'errors':[]
-    # @param {*} fileName name of the flat file including path and file extension.
-    # If none provided the flat data is written to STDOUT.
-    #  
-    # @resolve if the customer data was successfully written to the argument file,
-    # @reject if there was a problem either with the data itself, or while writing
-    # to file.
-    # 
-    def write(self, flatCustomer:dict,fileName:str):
-        pass
+    def write(self,fileName:str):
+        # TODO: test and guard file creation.
+        f = open(fileName, 'rw')
+        f.write(self.toFlat())
 
 if __name__ == '__main__':
     import doctest

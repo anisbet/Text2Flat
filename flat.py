@@ -19,13 +19,11 @@
 ############################################################################
 import sys
 
-def printError(*args, **kwargs):
-    # Can use like: printError("foo", "bar", "baz", sep="---")
-    print(*args, file=sys.stderr, **kwargs)
 class FlatWriter:
-    def __init__(self):
+    def __init__(self, minFields=3):
         self.customersJson = []
-        self.minimumFields = 3
+        self.minimumFields = minFields
+        self.totalErrors = 0
         self.symphonyTags = {
             "userId" : "USER_ID",                        # 21221012345678
             "userGroupId" : "USER_GROUP_ID",             # 
@@ -54,7 +52,6 @@ class FlatWriter:
             "userAccess" : "USER_ACCESS",                # PUBLIC
             "userEnvironment" : "USER_ENVIRONMENT",      # PUBLIC
             "userMailingaddr" : "USER_MAILINGADDR",      # 1
-            "userAddr1Begin" : "USER_ADDR1_BEGIN",       # Start of section
             "street" : "STREET",                         # Street address
             "citySlashState" : "CITY/STATE",             # City / State unchanged from original config on ILS.
             "cityProv" : "CITYPROV",                     #  Alternate for some libs.
@@ -64,16 +61,13 @@ class FlatWriter:
             "phone1" : "PHONE1",                         # 403-555-1212
             "email" : "EMAIL",                           # name@example.com
             "careSlashOf" : "CARE/OF",
-            "userAddr1End" : "USER_ADDR1_END",           #
-            "userAddr2Begin" : "USER_ADDR2_BEGIN",       #
-            "userAddr2End" : "USER_ADDR2_END",           #
-            "userAddr3Begin" : "USER_ADDR3_BEGIN",       #
-            "userAddr3End" : "USER_ADDR3_END",           #
-            "userXinfoBegin" : "USER_XINFO_BEGIN",       #
+            "userAddr1" : "USER_ADDR1_",
+            "userAddr2" : "USER_ADDR2_",
+            "userAddr3" : "USER_ADDR3_",
+            "userXinfo" : "USER_XINFO_",
             "notifyVia" : "NOTIFY_VIA",                  # 'PHONE'
             "note" : "NOTE",                             # 'ILS Team Test Account - DO NOT REMOVE!'
             "retrnmail" : "RETRNMAIL",                   # 'YES'
-            "userXinfoEnd" : "USER_XINFO_END",           #
             "homephone" : "HOMEPHONE"                    #
         }
 
@@ -121,6 +115,8 @@ class FlatWriter:
 
         # Arrays of address and extended info blocks. Extend for addr2 and addr3
         self.addr1 = {}
+        # These are valid blocks but there is currently no way, and no reason
+        # to use them with this application.
         self.addr2 = {}
         self.addr3 = {}
         self.xinfo = {}
@@ -143,12 +139,12 @@ class FlatWriter:
         # Common messages required when processing Flat data.
         # 
         self._messages_ = {
-            'noJson' : 'Malformed or empty customer data.',
-            'invalidDate' : 'contains an invalid date.',
-            'errorFileWrite' : 'Failed to write flat data to file.',
-            'errorFileOpen' : 'Failed to open flat file for writing.',
-            'invalidSymphonyTag' : 'Invalid Symphony tag ',
-            'unknownJsonTag' : 'Customer data includes unknown tag '
+            'noJson' : 'Empty customer data ',
+            'invalidDate' : 'Contains an invalid date ',
+            'missingData' : 'Not enough data to create a thin file ',
+            'fileError' : 'Failed create flat file ',
+            'invalidSymphonyTag' : 'Invalid Symphony tag(s) ',
+            'unknownJsonTag' : 'Customer data includes unknown tag(s) '
         }
 
     # Returns all the current names expected in the input JSON file.
@@ -204,6 +200,16 @@ class FlatWriter:
     # 
     def _ensureAnsiDates_(self):
         pass
+
+    # Prints arbitrary information to STDERR, and optionally increments the total
+    # error count for reporting purposes.
+    # param: incrementErrors - bool True if reporting an analytic error, and False
+    #   if you just need to print something to STDERR.
+    def printError(self, incrementErrors:bool=False, *args, **kwargs):
+        if incrementErrors == True:
+            self.totalErrors += 1
+        # Can use like: printError("foo", "bar", "baz", sep="---")
+        print(*args, file=sys.stderr, **kwargs)
     
     # Returns all the names used by this application to identify all the
     # fields used by Symphony for flat files.
@@ -212,7 +218,7 @@ class FlatWriter:
         """
         >>> f = FlatWriter()
         >>> f.getSymphonyTags()
-        ['userId', 'userGroupId', 'userName', 'userFirstName', 'userLastName', 'userMiddleName', 'userPreferredName', 'userNameDspPref', 'userLibrary', 'userProfile', 'userPrefLang', 'userPin', 'userStatus', 'userRoutingFlag', 'userChgHistRule', 'userLastActivity', 'userPrivGranted', 'userPrivExpires', 'userBirthDate', 'userCategory1', 'userCategory2', 'userCategory3', 'userCategory4', 'userCategory5', 'userAccess', 'userEnvironment', 'userMailingaddr', 'userAddr1Begin', 'street', 'citySlashState', 'cityProv', 'citySlashProv', 'postalcode', 'phone', 'phone1', 'email', 'careSlashOf', 'userAddr1End', 'userAddr2Begin', 'userAddr2End', 'userAddr3Begin', 'userAddr3End', 'userXinfoBegin', 'notifyVia', 'note', 'retrnmail', 'userXinfoEnd', 'homephone']
+        ['userId', 'userGroupId', 'userName', 'userFirstName', 'userLastName', 'userMiddleName', 'userPreferredName', 'userNameDspPref', 'userLibrary', 'userProfile', 'userPrefLang', 'userPin', 'userStatus', 'userRoutingFlag', 'userChgHistRule', 'userLastActivity', 'userPrivGranted', 'userPrivExpires', 'userBirthDate', 'userCategory1', 'userCategory2', 'userCategory3', 'userCategory4', 'userCategory5', 'userAccess', 'userEnvironment', 'userMailingaddr', 'street', 'citySlashState', 'cityProv', 'citySlashProv', 'postalcode', 'phone', 'phone1', 'email', 'careSlashOf', 'userAddr1', 'userAddr2', 'userAddr3', 'userXinfo', 'notifyVia', 'note', 'retrnmail', 'homephone']
         """
         return list(self.symphonyTags.keys())
 
@@ -256,7 +262,7 @@ class FlatWriter:
     #   enough data to create a thin file
     def appendCustomer(self,customerJSON:dict):
         if customerJSON == None or len(customerJSON) < self.minimumFields:
-            printError(self._messages_['noJson'])
+            self.printError(True,self._messages_['noJson'])
             return False
         for defaultKey in self._defaults_.keys():
             # Add the defaults, but only if they are not set in the customer data
@@ -265,6 +271,26 @@ class FlatWriter:
         self.customersJson.append(customerJSON)
         return True
 
+    # Prints any or each of the block data.
+    # param: t2fBlockName str - text2flat name of the block to print, like: 'userAddr1' or 'xInfo'.
+    # param: block dict - data block.
+    # return: count of errors encountered during the process.
+    def _printBlock_(self,t2fBlockName:str,block:dict):
+        customerErrors = 0
+        print(f".{self.symphonyTags.get(f'{t2fBlockName}')}BEGIN.")
+        for key in block.keys():
+            symphonyFieldName = self._tagMap_.get(key)
+            # Again default tags are added, but not expected to be part of the customer data
+            if symphonyFieldName == None:
+                symphonyFieldName = key
+            symphonyField = self.symphonyTags.get(symphonyFieldName)
+            if symphonyField == None:
+                self.printError(True, f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
+                customerErrors += 1
+                continue
+            print(f".{symphonyField}.   |a{block.get(key)}")
+        print(f".{self.symphonyTags.get(f'{t2fBlockName}')}END.")
+        return customerErrors
     # 
     # Converts customer data to flat data. The returned ojbect is also json which can be
     # sent to file with the write() function.
@@ -276,13 +302,16 @@ class FlatWriter:
     # 
     def toFlat(self):
         """
+        TODO: finish the _ensureAnsiDate_() function and glob city/state.
         >>> custJson = {'firstName': 'Lewis','middleName': 'Fastest','lastName': 'Hamilton', 'birthday': '1974-08-22', 'gender': 'MALE', 'email': 'example@gmail.com', 'phone': '780-555-1212', 'street': '11535 74 Ave.', 'city': 'Edmonton', 'province': 'AB', 'postalcode': 'T6G0G9','barcode': '1101223334444', 'pin': 'IlikeBread', 'type': 'MAC-DSSTUD', 'expiry': '2021-08-22','careOf': 'Doe, John','branch': 'EPLWMC', 'status': 'OK', 'note': 'Hi' }
         >>> f = FlatWriter()
         >>> f.appendCustomer(custJson)
+        True
         >>> f.toFlat()
         *** DOCUMENT BOUNDARY ***
         FORM=LDUSER
         .USER_FIRST_NAME.   |aLewis
+        .USER_MIDDLE_NAME.   |aFastest
         .USER_LAST_NAME.   |aHamilton
         .USER_BIRTH_DATE.   |a19740822
         .USER_ID.   |a1101223334444
@@ -312,8 +341,7 @@ class FlatWriter:
         .RETRNMAIL.   |aYES
         .USER_XINFO_END.
         """
-        printError(f"processing flat files")
-        totalErrors = 0
+        self.printError(True, f"processing flat files")
         for idx, customer in enumerate(self.customersJson):
             customerErrors = 0
             print(f"*** DOCUMENT BOUNDARY ***")
@@ -330,44 +358,27 @@ class FlatWriter:
                     symphonyFieldName = customerField
                 symphonyField = self.symphonyTags.get(symphonyFieldName)
                 if symphonyField == None:
-                    printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{symphonyFieldName}")
-                    totalErrors += 1
+                    self.printError(True,f"**error, {self._messages_['invalidSymphonyTag']}=>{symphonyFieldName}")
                     customerErrors += 1
                     continue
                 print(f".{symphonyField}.   |a{customer.get(customerField)}")
+            #
             # Now print the blocks if they have any content.
+            # There are only two blocks to output, address 1 and xinfo.
+            # That's because those are the only blocks that can be differentiated
+            # in the customer data typically. This could change.
+            # 
             if len(self.addr1) > 0:
-                print(f".{self.symphonyTags.get('userAddr1Begin')}.")
-                for key in self.addr1.keys():
-                    symphonyFieldName = self._tagMap_.get(key)
-                    # Again default tags are added, but not expected to be part of the customer data
-                    if symphonyFieldName == None:
-                        symphonyFieldName = key
-                    symphonyField = self.symphonyTags.get(symphonyFieldName)
-                    if symphonyField == None:
-                        printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
-                        totalErrors += 1
-                        customerErrors += 1
-                        continue
-                    print(f".{symphonyField}.   |a{self.addr1.get(key)}")
-                print(f".{self.symphonyTags.get('userAddr1End')}.")
+                customerErrors += self._printBlock_('userAddr1', self.addr1)
+            if len(self.addr2) > 0:
+                customerErrors += self._printBlock_('userAddr2', self.addr2)
+            if len(self.addr3) > 0:
+                customerErrors += self._printBlock_('userAddr3', self.addr3)
             if len(self.xinfo) > 0:
-                print(f".{self.symphonyTags.get('userXinfoBegin')}.")
-                for key in self.xinfo.keys():
-                    symphonyFieldName = self._tagMap_.get(key)
-                    if symphonyFieldName == None:
-                        symphonyFieldName = key
-                    symphonyField = self.symphonyTags.get(symphonyFieldName)
-                    if symphonyField == None:
-                        printError(f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
-                        totalErrors += 1
-                        customerErrors += 1
-                        continue
-                    print(f".{symphonyField}.   |a{self.xinfo.get(key)}")
-                print(f".{self.symphonyTags.get('userXinfoEnd')}.")
-            printError(f"customer {idx +1} output with {customerErrors} error(s)")
+                customerErrors += self._printBlock_('userXinfo', self.xinfo)
+            self.printError(False, f"customer {idx +1} output with {customerErrors} error(s)")
         else:
-            printError(f"processed {len(self.customersJson)} customer file(s) with {totalErrors} error(s)")
+            self.printError(False, f"processed {len(self.customersJson)} customer file(s) with {self.totalErrors} error(s)")
 
     # 
     # Writes flat customer data to file.

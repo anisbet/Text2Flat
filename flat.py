@@ -455,6 +455,75 @@ class FlatWriter:
             print(f".{symphonyField}.   |a{block.get(key)}")
         print(f".{self.symphonyTags.get(f'{t2fBlockName}')}END.")
         return customerErrors
+
+    # Define which fields should be merged. For example 'city, province'. 
+    # If the srcField is empty, doesn't exist, or the dstField doesn't exist
+    # nothing is done. 
+    # param: customer dict - single customer data.
+    # param: srcField str - which field will be merged into the dstField. Once
+    #    merged the field will be removed from the customer data optionally.
+    # param: dstField str - name of field where the merged fields will end up.
+    # param: delimiter str - character(s) used to separate the two fields, the 
+    # default being ', '.
+    # param: removeSrcField bool - if True remove the srcField and keep it otherwise. 
+    #    Default is remove the srcField.
+    # return: True if the srcField was merged to the dstField, and False
+    #   otherwise.
+    def mergeFields(self, 
+    customer:dict, 
+    srcField:str, 
+    dstField:str, 
+    delimiter:str=', ', 
+    removeSrcField:bool=True,
+    altField:str=None):
+        """
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton'}
+        >>> f = FlatWriter()
+        >>> f.mergeFields(custJson, 'firstName', 'lastName')
+        >>> custJson
+        {'lastName': 'Hamilton, Lewis'}
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton'}
+        >>> f.mergeFields(custJson, 'firstName', 'lastName', '|')
+        >>> custJson
+        {'lastName': 'Hamilton|Lewis'}
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton'}
+        >>> f.mergeFields(custJson, 'firstName', 'lastName', ' => ', False)
+        >>> custJson
+        {'firstName': 'Lewis', 'lastName': 'Hamilton => Lewis'}
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton'}
+        >>> f.mergeFields(custJson, 'firstName', 'lastName', ', ', False, 'note')
+        >>> custJson
+        {'firstName': 'Lewis', 'lastName': 'Hamilton', 'note': 'Hamilton, Lewis'}
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton'}
+        >>> f.mergeFields(custJson, 'firstName', 'lastName', ', ', True, 'note')
+        >>> custJson
+        {'lastName': 'Hamilton', 'note': 'Hamilton, Lewis'}
+        """
+        # return none if the customer data is empty of None
+        if customer == None or len(customer) < 1:
+            return
+        # TODO: must do nothing if one or both fields don't exist in the 
+        # customer data
+        src = dst = None
+        for key,value in customer.items():
+            if key == srcField:
+                src = value
+                continue
+            if key == dstField:
+                dst = value
+        # Merge the two fields in the customer data and replace the data
+        # in the dstField.
+        if src != None and dst != None:
+            if altField != None and self._tagMap_.get(altField) != None:
+                customer[altField] = f"{dst}{delimiter}{src}"
+            else:
+                customer[dstField] = f"{dst}{delimiter}{src}"
+        else:  # Don't remove the srcField if one or both fields weren't found
+            return
+        # remove the srcField optionally.
+        if removeSrcField == True:
+            customer.pop(srcField)
+
     # 
     # Converts customer data to flat data. The returned ojbect is also json which can be
     # sent to file with the write() function.

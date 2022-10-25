@@ -18,6 +18,8 @@
 #
 ############################################################################
 import sys
+import re
+import datetime
 
 class FlatWriter:
     def __init__(self, minFields=3):
@@ -69,6 +71,22 @@ class FlatWriter:
             "note" : "NOTE",                             # 'ILS Team Test Account - DO NOT REMOVE!'
             "retrnmail" : "RETRNMAIL",                   # 'YES'
             "homephone" : "HOMEPHONE"                    #
+        }
+        # Covers: yyyy-mm-dd, yyyy/mm/dd, mm-dd-yyyy, mm/dd/yyyy, yyyymmdd, mmddyyyy
+        self.reg_mmddyyyy = re.compile(r'^(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])[-/]?(19|20)\d\d')
+        self.reg_ddmmyyyy = re.compile(r'^(0[1-9]|[12][0-9]|3[01])[-/]?(0[1-9]|1[012])[-/]?(19|20)\d\d')
+        self.reg_yyyymmdd = re.compile(r'^(19|20)\d\d[-/]?(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])')
+
+        # 
+        # Common messages required when processing Flat data.
+        # 
+        self._messages_ = {
+            'noJson' : 'Empty customer data ',
+            'invalidDate' : 'contains an invalid date.',
+            'missingData' : 'Not enough data to create a thin file ',
+            'fileError' : 'Failed create flat file ',
+            'invalidSymphonyField' : 'Invalid Symphony tag(s) ',
+            'unknownJsonField' : 'Customer data includes unknown tag(s) '
         }
 
         # Reasonable default values. Some of these will have defaults 
@@ -135,18 +153,6 @@ class FlatWriter:
             "retrnmail" : self.xinfo
         }
 
-        # 
-        # Common messages required when processing Flat data.
-        # 
-        self._messages_ = {
-            'noJson' : 'Empty customer data ',
-            'invalidDate' : 'Contains an invalid date ',
-            'missingData' : 'Not enough data to create a thin file ',
-            'fileError' : 'Failed create flat file ',
-            'invalidSymphonyTag' : 'Invalid Symphony tag(s) ',
-            'unknownJsonTag' : 'Customer data includes unknown tag(s) '
-        }
-
     # Returns all the current names expected in the input JSON file.
     # This means that it returns all the names that you expect to collect
     # from the custom API. For example the default name for the first name
@@ -196,10 +202,85 @@ class FlatWriter:
     # Tests:
     # Should find and convert date fields to ANSI date strings.
     # Date fields with invalid dates are removed from the map, and reported.
-    # @param {*} jsonMap Map of the customer's data.
+    # param: fieldName str - name of the date field for reporting purposes.
+    # param: testDate str - date to convert to ANSI date (yyyymmdd).
+    # return: the input string date converted to an ANSI date. If the input
+    #   string could not be converted, nothing is returned and an error is
+    #   printed to STDERR.
     # 
-    def _ensureAnsiDates_(self):
-        pass
+    def getAnsiDate(self,fieldName:str,testDate:str):
+        """
+        Guesses if the argument is a date field and if it is, is it a birth date, expiry, or neither.
+        For example:
+        >>> f = FlatWriter()
+        >>> f.getAnsiDate("expiry", "23-12-2020")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "12-23-2020")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "12232020")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "2020-12-23")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "2020")
+        
+        >>> f.getAnsiDate("expiry", "2020-12-23 19:37:10 GMT")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "2020-12-23T19:37:10.12234 GMT")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "2022-11-06 18:02:01.558085")
+        '20221106'
+        >>> f.getAnsiDate("expiry", "Bar")
+        
+        >>> f.getAnsiDate("expiry", "2022-31-06 18:02:01.558085")
+        
+        >>> f.getAnsiDate("expiry", "31-06-2022 18:02:01.558085")
+        
+        >>> f.getAnsiDate("expiry", "12/23/2020")
+        '20201223'
+        >>> f.getAnsiDate("expiry", "NEVER")
+        'NEVER'
+        >>> f.getAnsiDate("birthday", "NEVER")
+        
+        """
+        if testDate == None or testDate == '':
+            # Not necessarily an error because neither expiry or birthday are critical.
+            return
+        test_date = testDate
+        new_date = ""
+        for ch in ['/','-']:
+            if ch in testDate:
+                testDate = testDate.replace(ch,'')
+        # Trim off any trailing timestamps.
+        testDate = testDate[:8]
+        if self.reg_mmddyyyy.match(test_date):
+            try:
+                new_date = datetime.datetime.strptime(testDate, "%m%d%Y").date()
+            except ValueError:
+                self.printError(True, f"*warning, '{fieldName}' {self._messages_['invalidDate']}")
+                return
+        elif self.reg_ddmmyyyy.match(test_date):
+            try:
+                new_date = datetime.datetime.strptime(testDate, "%d%m%Y").date()
+            except ValueError:
+                self.printError(True, f"*warning, '{fieldName}' {self._messages_['invalidDate']}")
+                return
+        elif self.reg_yyyymmdd.match(test_date):
+            try:
+                new_date = datetime.datetime.strptime(testDate, "%Y%m%d").date()
+            except ValueError:
+                self.printError(True, f"*warning, '{fieldName}' {self._messages_['invalidDate']}")
+                return
+        else:
+            # Allow the user of 'NEVER' for expiry only.
+            for tagMapFieldName,value in self._tagMap_.items():
+                if value == "userPrivExpires":
+                    if fieldName == tagMapFieldName and testDate == "NEVER":
+                        return 'NEVER'
+            else:
+                self.printError(True, f"*warning, '{fieldName}' {self._messages_['invalidDate']}")
+                return
+        yyyymmdd = ''.join(c for c in str(new_date) if c not in '-')[0:8]
+        return yyyymmdd
 
     # Prints arbitrary information to STDERR, and optionally increments the total
     # error count for reporting purposes.
@@ -261,6 +342,73 @@ class FlatWriter:
     # Return: True if the customer data was added and False if there wasn't 
     #   enough data to create a thin file
     def appendCustomer(self,customerJSON:dict):
+        """
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton', 'birthday': '1974-08-22', 'expiry': '2021-08-22'}
+        >>> f = FlatWriter()
+        >>> f.appendCustomer(custJson)
+        True
+        >>> f.toFlat()
+        *** DOCUMENT BOUNDARY ***
+        FORM=LDUSER
+        .USER_FIRST_NAME.   |aLewis
+        .USER_LAST_NAME.   |aHamilton
+        .USER_BIRTH_DATE.   |a19740822
+        .USER_PRIV_EXPIRES.   |a20210822
+        .USER_NAME_DSP_PREF.   |a0
+        .USER_PREF_LANG.   |aENGLISH
+        .USER_ROUTING_FLAG.   |aY
+        .USER_CHG_HIST_RULE.   |aALLCHARGES
+        .USER_ACCESS.   |aPUBLIC
+        .USER_ENVIRONMENT.   |aPUBLIC
+        .USER_MAILINGADDR.   |a1
+        .USER_XINFO_BEGIN.
+        .NOTIFY_VIA.   |aPHONE
+        .RETRNMAIL.   |aYES
+        .USER_XINFO_END.
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton', 'birthday': '1974-08-22', 'expiry': 'NEVER'}
+        >>> f = FlatWriter()
+        >>> f.appendCustomer(custJson)
+        True
+        >>> f.toFlat()
+        *** DOCUMENT BOUNDARY ***
+        FORM=LDUSER
+        .USER_FIRST_NAME.   |aLewis
+        .USER_LAST_NAME.   |aHamilton
+        .USER_BIRTH_DATE.   |a19740822
+        .USER_PRIV_EXPIRES.   |aNEVER
+        .USER_NAME_DSP_PREF.   |a0
+        .USER_PREF_LANG.   |aENGLISH
+        .USER_ROUTING_FLAG.   |aY
+        .USER_CHG_HIST_RULE.   |aALLCHARGES
+        .USER_ACCESS.   |aPUBLIC
+        .USER_ENVIRONMENT.   |aPUBLIC
+        .USER_MAILINGADDR.   |a1
+        .USER_XINFO_BEGIN.
+        .NOTIFY_VIA.   |aPHONE
+        .RETRNMAIL.   |aYES
+        .USER_XINFO_END.
+        >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton', 'birthday': 'happy birthday', 'expiry': '2023/09/27'}
+        >>> f = FlatWriter()
+        >>> f.appendCustomer(custJson)
+        True
+        >>> f.toFlat()
+        *** DOCUMENT BOUNDARY ***
+        FORM=LDUSER
+        .USER_FIRST_NAME.   |aLewis
+        .USER_LAST_NAME.   |aHamilton
+        .USER_PRIV_EXPIRES.   |a20230927
+        .USER_NAME_DSP_PREF.   |a0
+        .USER_PREF_LANG.   |aENGLISH
+        .USER_ROUTING_FLAG.   |aY
+        .USER_CHG_HIST_RULE.   |aALLCHARGES
+        .USER_ACCESS.   |aPUBLIC
+        .USER_ENVIRONMENT.   |aPUBLIC
+        .USER_MAILINGADDR.   |a1
+        .USER_XINFO_BEGIN.
+        .NOTIFY_VIA.   |aPHONE
+        .RETRNMAIL.   |aYES
+        .USER_XINFO_END.
+        """
         if customerJSON == None or len(customerJSON) < self.minimumFields:
             self.printError(True,self._messages_['noJson'])
             return False
@@ -268,6 +416,22 @@ class FlatWriter:
             # Add the defaults, but only if they are not set in the customer data
             if customerJSON.get(defaultKey) == None:
                 customerJSON[defaultKey] = self._defaults_.get(defaultKey)
+        # Convert 'expiry' and 'birthday' to ANSI dates.
+        # The user may have renamed the fields so reverse lookup what they 
+        # are referred to in the JSON, and convert and update the customer record
+        symphonyDates = ["userBirthDate", "userPrivExpires"]
+        for symphonyDate in symphonyDates:
+            for fieldName,value in self._tagMap_.items():
+                if value == symphonyDate:
+                    customerDate = customerJSON[fieldName]
+                    if customerDate != None:
+                        convertedDate = self.getAnsiDate(fieldName, customerDate)
+                        # Date field had an invalid value
+                        # Note that 'NEVER' is invalid b/c of birthday
+                        if convertedDate == None:
+                            customerJSON.pop(fieldName)
+                        else:
+                            customerJSON[fieldName] = convertedDate
         self.customersJson.append(customerJSON)
         return True
 
@@ -285,7 +449,7 @@ class FlatWriter:
                 symphonyFieldName = key
             symphonyField = self.symphonyTags.get(symphonyFieldName)
             if symphonyField == None:
-                self.printError(True, f"**error, {self._messages_['invalidSymphonyTag']}=>{key}")
+                self.printError(True, f"**error, {self._messages_['invalidSymphonyField']}=>{key}")
                 customerErrors += 1
                 continue
             print(f".{symphonyField}.   |a{block.get(key)}")
@@ -302,7 +466,7 @@ class FlatWriter:
     # 
     def toFlat(self):
         """
-        TODO: finish the _ensureAnsiDate_() function and glob city/state.
+        TODO: finish glob city/state.
         >>> custJson = {'firstName': 'Lewis','middleName': 'Fastest','lastName': 'Hamilton', 'birthday': '1974-08-22', 'gender': 'MALE', 'email': 'example@gmail.com', 'phone': '780-555-1212', 'street': '11535 74 Ave.', 'city': 'Edmonton', 'province': 'AB', 'postalcode': 'T6G0G9','barcode': '1101223334444', 'pin': 'IlikeBread', 'type': 'MAC-DSSTUD', 'expiry': '2021-08-22','careOf': 'Doe, John','branch': 'EPLWMC', 'status': 'OK', 'note': 'Hi' }
         >>> f = FlatWriter()
         >>> f.appendCustomer(custJson)
@@ -358,7 +522,7 @@ class FlatWriter:
                     symphonyFieldName = customerField
                 symphonyField = self.symphonyTags.get(symphonyFieldName)
                 if symphonyField == None:
-                    self.printError(True,f"**error, {self._messages_['invalidSymphonyTag']}=>{symphonyFieldName}")
+                    self.printError(True,f"**error, {self._messages_['invalidSymphonyField']}=>{symphonyFieldName}")
                     customerErrors += 1
                     continue
                 print(f".{symphonyField}.   |a{customer.get(customerField)}")

@@ -26,6 +26,7 @@ class FlatWriter:
         self.customersJson = []
         self.minimumFields = minFields
         self.totalErrors = 0
+        self.mergedFields = {'citySlashState': ['city', 'province']}  # Src and dst fields to merge.
         self.symphonyTags = {
             "userId" : "USER_ID",                        # 21221012345678
             "userGroupId" : "USER_GROUP_ID",             # 
@@ -63,15 +64,16 @@ class FlatWriter:
             "phone1" : "PHONE1",                         # 403-555-1212
             "email" : "EMAIL",                           # name@example.com
             "careSlashOf" : "CARE/OF",
-            "userAddr1" : "USER_ADDR1_",
-            "userAddr2" : "USER_ADDR2_",
-            "userAddr3" : "USER_ADDR3_",
-            "userXinfo" : "USER_XINFO_",
             "notifyVia" : "NOTIFY_VIA",                  # 'PHONE'
             "note" : "NOTE",                             # 'ILS Team Test Account - DO NOT REMOVE!'
             "retrnmail" : "RETRNMAIL",                   # 'YES'
-            "homephone" : "HOMEPHONE"                    #
+            "homephone" : "HOMEPHONE",                   
+            "userAddr1" : "USER_ADDR1_",
+            "userAddr2" : "USER_ADDR2_",
+            "userAddr3" : "USER_ADDR3_",
+            "userXinfo" : "USER_XINFO_"            
         }
+
         # Covers: yyyy-mm-dd, yyyy/mm/dd, mm-dd-yyyy, mm/dd/yyyy, yyyymmdd, mmddyyyy
         self.reg_mmddyyyy = re.compile(r'^(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])[-/]?(19|20)\d\d')
         self.reg_ddmmyyyy = re.compile(r'^(0[1-9]|[12][0-9]|3[01])[-/]?(0[1-9]|1[012])[-/]?(19|20)\d\d')
@@ -117,7 +119,7 @@ class FlatWriter:
             "email" :      "email",
             "phone" :      "phone",
             "street" :     "street",
-            "city" :       "citySlashState", # TODO: put these together
+            "city" :       "citySlashState",
             "province" :   "citySlashState",
             "country" :    "country",
             "postalcode" : "postalcode",
@@ -271,7 +273,7 @@ class FlatWriter:
                 self.printError(True, f"*warning, '{fieldName}' {self._messages_['invalidDate']}")
                 return
         else:
-            # Allow the user of 'NEVER' for expiry only.
+            # Allow the user of 'NEVER' for expiry only, when there is a 'no expiry policy'.
             for tagMapFieldName,value in self._tagMap_.items():
                 if value == "userPrivExpires":
                     if fieldName == tagMapFieldName and testDate == "NEVER":
@@ -341,7 +343,7 @@ class FlatWriter:
     # param: customer JSON - dict
     # Return: True if the customer data was added and False if there wasn't 
     #   enough data to create a thin file
-    def appendCustomer(self,customerJSON:dict):
+    def appendCustomer(self,customerJson:dict):
         """
         >>> custJson = {'firstName': 'Lewis','lastName': 'Hamilton', 'birthday': '1974-08-22', 'expiry': '2021-08-22'}
         >>> f = FlatWriter()
@@ -409,13 +411,13 @@ class FlatWriter:
         .RETRNMAIL.   |aYES
         .USER_XINFO_END.
         """
-        if customerJSON == None or len(customerJSON) < self.minimumFields:
+        if customerJson == None or len(customerJson) < self.minimumFields:
             self.printError(True,self._messages_['noJson'])
             return False
         for defaultKey in self._defaults_.keys():
             # Add the defaults, but only if they are not set in the customer data
-            if customerJSON.get(defaultKey) == None:
-                customerJSON[defaultKey] = self._defaults_.get(defaultKey)
+            if customerJson.get(defaultKey) == None:
+                customerJson[defaultKey] = self._defaults_.get(defaultKey)
         # Convert 'expiry' and 'birthday' to ANSI dates.
         # The user may have renamed the fields so reverse lookup what they 
         # are referred to in the JSON, and convert and update the customer record
@@ -423,16 +425,16 @@ class FlatWriter:
         for symphonyDate in symphonyDates:
             for fieldName,value in self._tagMap_.items():
                 if value == symphonyDate:
-                    customerDate = customerJSON[fieldName]
+                    customerDate = customerJson[fieldName]
                     if customerDate != None:
                         convertedDate = self.getAnsiDate(fieldName, customerDate)
                         # Date field had an invalid value
                         # Note that 'NEVER' is invalid b/c of birthday
                         if convertedDate == None:
-                            customerJSON.pop(fieldName)
+                            customerJson.pop(fieldName)
                         else:
-                            customerJSON[fieldName] = convertedDate
-        self.customersJson.append(customerJSON)
+                            customerJson[fieldName] = convertedDate
+        self.customersJson.append(customerJson)
         return True
 
     # Prints any or each of the block data.
@@ -456,6 +458,15 @@ class FlatWriter:
         print(f".{self.symphonyTags.get(f'{t2fBlockName}')}END.")
         return customerErrors
 
+    # Presets the fields that will be merged.
+    # This is used to merge, say, city (Edmonton) and province (AB) into a new tag
+    # called 'citySlashState' which maps to Symphony .CITY/STATE.
+    # 'altField'         'city' (dstField)   'province' (srcField)
+    # .CITY/STATE.     |aEdmonton, AB
+    def setMergeFields(self, field:str, mergeFieldList:list):
+        # TODO: check that the field is in the _tagList_
+        self.mergedFields[field] = mergeFieldList
+
     # Define which fields should be merged. For example 'city, province'. 
     # If the srcField is empty, doesn't exist, or the dstField doesn't exist
     # nothing is done. 
@@ -469,6 +480,7 @@ class FlatWriter:
     #    Default is remove the srcField.
     # return: True if the srcField was merged to the dstField, and False
     #   otherwise.
+    # TODO: refactor to {'field':['field1', 'field2']}
     def mergeFields(self, 
     customer:dict, 
     srcField:str, 
@@ -502,7 +514,7 @@ class FlatWriter:
         # return none if the customer data is empty of None
         if customer == None or len(customer) < 1:
             return
-        # TODO: must do nothing if one or both fields don't exist in the 
+        # Must do nothing if one or both fields don't exist in the 
         # customer data
         src = dst = None
         for key,value in customer.items():
@@ -535,7 +547,7 @@ class FlatWriter:
     # 
     def toFlat(self):
         """
-        TODO: finish glob city/state.
+        finish glob city/state.
         >>> custJson = {'firstName': 'Lewis','middleName': 'Fastest','lastName': 'Hamilton', 'birthday': '1974-08-22', 'gender': 'MALE', 'email': 'example@gmail.com', 'phone': '780-555-1212', 'street': '11535 74 Ave.', 'city': 'Edmonton', 'province': 'AB', 'postalcode': 'T6G0G9','barcode': '1101223334444', 'pin': 'IlikeBread', 'type': 'MAC-DSSTUD', 'expiry': '2021-08-22','careOf': 'Doe, John','branch': 'EPLWMC', 'status': 'OK', 'note': 'Hi' }
         >>> f = FlatWriter()
         >>> f.appendCustomer(custJson)

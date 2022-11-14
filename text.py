@@ -166,13 +166,11 @@ class TextParser:
             for k,v in self.requestedFields.items():
                 print(f"requested fields (in order) {k} => {v}")
         
-
     # A fast way to tell if an enormous corpus has words that can be found in an arbitrary
     # but specific field is to convert the field to a set of words, then find the intersection
     # with the set of the corpus. If there is more than one successful match a word in the corpus
     # matched a word in the field.
     def _corpusCompare_(self, data: list, field: str):
-#         print(f"====The corpus to read for {field} is {corpus_dict[field]}")
         corpus_to_read = corpus_dict[field]
         if corpus_to_read == None:
             print(f"don't know how to read a corpus for '{field}'")
@@ -182,7 +180,6 @@ class TextParser:
         for line in f.readlines():
             corpus.append(line.lower().rstrip(os.linesep))
         corpusSet = set(corpus)
-#         print(f"first 5 entries in the corpus: {corpus[0:5]}")
         # Free up some space for really big lists.
         corpus = []
         for idx, d in enumerate(data):
@@ -387,11 +384,9 @@ class TextParser:
     def getCurrentFields(self):
         return list(self._tagMap_.keys())
     
-    # TODO: remove as not required except for testing.
     def getCorpusNames(self):
         return list(self.corpusDictionary.keys())
 
-    # TODO: remove as not required except for testing.
     def getCorpusFiles(self):
         return list(self.corpusDictionary.values())
 

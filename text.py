@@ -24,16 +24,19 @@ import datetime
 #
 # This class parses the raw text file.
 class TextParser:
-    # Expects the configuration dictionary and a file name to read or string of data to parse.
-    def __init__(self, configs:dict, data:str=''):
+    # Expects the configuration dictionary and a file name to read or 
+    # string of data to parse. Debug is not part of the transformation config.
+    def __init__(self, configs:dict, data:str='', debug:bool=False):
+        self._debug_ = debug
         self._messages_ = {}
         self._messages_['missingConfig'] = "**error missing configuration section"
         self._messages_['missingCorpus'] = "**error expected a lookup file for"
         self._messages_['missingFile'] = "**error expected a file but it doesn't exist"
         self._messages_['missingRequired'] = "**error no 'required' fields were specified."
         self.delimiter = ','
+        if configs == None or len(configs) < 1:
+            raise ValueError(f"{self._messages_['missingConfig']}")
         # You can rebind the names of columns to whatever you want
-        # TODO: implement this as per flat.py
         # These keys are in order and python guarantees key order as of python 3.10.
         self._tagMap_ = {
             'userId': 'userId',
@@ -55,8 +58,8 @@ class TextParser:
         # A dictionary of strategies for finding specific data. Usually regular expressions.
         self.known_strategies = {}
         self.known_strategies['userId'] = re.compile(r'^\d{6,15}$')
-        self.known_strategies['branch'] = self._corpus_compare_
-        self.known_strategies['profile'] = self._corpus_compare_
+        self.known_strategies['branch'] = self._corpusCompare_
+        self.known_strategies['profile'] = self._corpusCompare_
         self.known_strategies['postalcode'] = re.compile(r'^[a-zA-Z]\d[a-zA-Z](\s{1,})?\d[a-zA-Z]\d$')
         self.known_strategies['email'] = re.compile(r'^(\w|\.|\_|\-)+[@](\w|\_|\-|\.)+[.]\w{2,3}$')
         self.known_strategies['phone'] = re.compile(r'^(\+)?(\()?\d{3}(-| |\)(\s|-)?)?\d{3}(-| )?\d{4}$')
@@ -64,30 +67,51 @@ class TextParser:
         self.known_strategies['expiry'] = self._getRequestedDate_
         self.known_strategies['country'] = re.compile(r'^(CA|Canada)')
         self.known_strategies['province'] = re.compile(r'^(NL|PE|NS|NB|QC|ON|MB|SK|AB|BC|YT|NT|NU)')
-        self.known_strategies['street'] = self._corpus_compare_
-        self.known_strategies['city'] = self._corpus_compare_
+        self.known_strategies['street'] = self._corpusCompare_
+        self.known_strategies['city'] = self._corpusCompare_
         self.known_strategies['gender'] = re.compile(r'^((M|m)(ale)?|(F|f)(emale)?|(P|p)refer\s+not\s+to\s+say|(N|n)(ot\s+listed)?|(X|x))$')
-        self.known_strategies['firstName'] = self._corpus_compare_
-        self.known_strategies['lastName'] = self._corpus_compare_
+        self.known_strategies['firstName'] = self._corpusCompare_
+        self.known_strategies['lastName'] = self._corpusCompare_
+        # Note: we can't just use the _tags_.keys() because if the key changes the order of
+        # keys is no longer guaranteed.
+        self.preferredSearchOrder = ['userId','branch','profile','postalcode','email','phone','birthday',
+            'expiry','street','province','gender','city','lastName','firstName']
         # Covers: yyyy-mm-dd, yyyy/mm/dd, mm-dd-yyyy, mm/dd/yyyy, yyyymmdd, mmddyyyy date searches
         self.reg_mmddyyyy = re.compile(r'^(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])[-/]?(19|20)\d\d')
         self.reg_ddmmyyyy = re.compile(r'^(0[1-9]|[12][0-9]|3[01])[-/]?(0[1-9]|1[012])[-/]?(19|20)\d\d')
         self.reg_yyyymmdd = re.compile(r'^(19|20)\d\d[-/]?(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])')
         # Set up configs which include:
         # Does the configuration specify a new binding for field names?
+        self._rebindFieldNames_(configs)
+        # Find out if the delimiter is set and use ',' by Default
+        self._setDelimiter_(configs)
+        self.optionalList = []
+        self.requiredList = []
+        # Keep track of if the field is required or optional. 
+        self.requestedFields = {}
+        # Load and order requested fields in order of search reliability.
+        self._loadRequestedFields_(configs)
+        # Names of expected corpuses
+        self.corpusNames = ['street','firstName','lastName','city','branch','profile']
+        # The names of the corpuses and the files that contain the corpus data as values, all betted
+        self.corpusDictionary = {}
+        self._loadCorpora_(configs)
+        # TODO: Create customers JSON and control output of flat files.
+
+    # Specify a new binding for field names. 
+    def _rebindFieldNames_(self,configs):
         fieldNames:dict = configs.get('fieldBindings')
         if fieldNames != None:
             for oldName,newName in fieldNames.items():
                 self.renameField(oldName, newName)
-        # Names of expected corpuses
-        # TODO: bind the user names to the correct files.
-        self.corpusNames = ['street','firstName','lastName','city','branch','profile']
-        # The names of the corpuses and the files that contain the corpus data as values, all betted
-        self.corpusDictionary = {}
+    
+    # Loads the corpora of first names, last names, and street names.
+    def _loadCorpora_(self, configs):
         # Vet and Load the corpus names then match and test the associated corpus files
         corpusDict:dict = configs.get('corpus')
         if corpusDict == None:
             raise ValueError(f"{self._messages_['missingConfig']} 'corpus'.")
+        # Translate user preferred names to cononical names for corpora.
         for corpusName in self.corpusNames:
             for newFieldName in self._tagMap_.keys():
                 if corpusDict.get(newFieldName) != None and corpusName == self._tagMap_.get(newFieldName):
@@ -101,50 +125,53 @@ class TextParser:
                     raise ValueError(f"{self._messages_['missingFile']} '{corpusFile}'.")
             except KeyError:
                 raise ValueError(f"{self._messages_['missingCorpus']} '{corpusName}'.")
-        # TODO: remove after testing
-        # for k,v in self.corpusDictionary.items():
-        #     print(f"corpus dictionary {k} set to file {v}")
-        # Find out if the delimiter is set and use ',' by Default
+        if self._debug_:
+            for k,v in self.corpusDictionary.items():
+                print(f"corpus dictionary {k} set to file {v}")
+
+    # Set the delimiter used as field separators.
+    def _setDelimiter_(self, configs):
         delim:str = configs.get('delimiter')
         if delim != None:
             self.delimiter = delim
-        # Keep track of if the field is required or optional. 
-        self.requestedFields = {}
+
+    # Load the requested fields. 
+    def _loadRequestedFields_(self, configs):
         # What are the required fields?
         requiredList:list = configs.get('required')
         if requiredList == None:
             raise ValueError(f"{self._messages_['missingRequired']}.")
+        self.requiredList = requiredList
         # What are the optional fields?
         optionalList:list = configs.get('optional')
         if optionalList == None:
             # It's okay if there aren't any.
-            optionalList = []
+            self.optionalList = []
         # The data in columns can be unique in cases like postal codes or email addresses, but
         # other columns can have values that overlap. For example our library has someone with
         # the first name of Ave, which of course play havoc when checking for address strings.
         # One way to hedge our bets is to use a process of elemination, identify easy columns
         # early, and by process of elimination eventually identify harder types of data.
-        # Note: we can't just use the _tags_.keys() because if the key changes the order of
-        # keys is no longer guaranteed.
-        self.preferredSearchOrder = ['userId','branch','profile','postalcode','email','phone','birthday',
-            'expiry','street','province','gender','city','lastName','firstName']
         # Check the required list and optional list 
         for orderedField in self.preferredSearchOrder:
             # if the user field match a binding they predefined continue search otherwise signal warning. 
-            for optionalField in optionalList:
+            for optionalField in self.optionalList:
                 if self._tagMap_.get(optionalField) != None and orderedField == self._tagMap_.get(optionalField):
                     self.requestedFields[orderedField] = False
             # Do this again for required fields and update any duplicate making required fields take precidence. 
-            for requiredField in requiredList:
+            for requiredField in self.requiredList:
                 if self._tagMap_.get(requiredField) != None and orderedField == self._tagMap_.get(requiredField):
                     self.requestedFields[orderedField] = True
-        # TODO: Create customers JSON and control output of flat files.
+        if self._debug_:
+            for k,v in self.requestedFields.items():
+                print(f"requested fields (in order) {k} => {v}")
+        
 
     # A fast way to tell if an enormous corpus has words that can be found in an arbitrary
     # but specific field is to convert the field to a set of words, then find the intersection
     # with the set of the corpus. If there is more than one successful match a word in the corpus
     # matched a word in the field.
-    def _corpus_compare_(self, data: list, field: str):
+    def _corpusCompare_(self, data: list, field: str):
 #         print(f"====The corpus to read for {field} is {corpus_dict[field]}")
         corpus_to_read = corpus_dict[field]
         if corpus_to_read == None:

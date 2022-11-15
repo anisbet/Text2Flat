@@ -71,7 +71,7 @@ class TextParser:
             raise ValueError(f"{self._messages_['missingConfig']}")
         # You can rebind the names of columns to whatever you want
         # These keys are in order and python guarantees key order as of python 3.10.
-        self._tagMap_ = {
+        self._tag_map_ = {
             'userId': 'userId',
             'branch': 'branch',
             'profile': 'profile',
@@ -107,7 +107,7 @@ class TextParser:
         self.known_strategies['lastName'] = self._corpusCompare_
         # Note: we can't just use the _tags_.keys() because if the key changes the order of
         # keys is no longer guaranteed.
-        self.preferredSearchOrder = ['userId','branch','profile','postalcode','email','phone','birthday',
+        self.preferred_search_order = ['userId','branch','profile','postalcode','email','phone','birthday',
             'expiry','street','province','gender','city','lastName','firstName']
         # Covers: yyyy-mm-dd, yyyy/mm/dd, mm-dd-yyyy, mm/dd/yyyy, yyyymmdd, mmddyyyy date searches
         self.reg_mmddyyyy = re.compile(r'^(0[1-9]|1[012])[-/]?(0[1-9]|[12][0-9]|3[01])[-/]?(19|20)\d\d')
@@ -118,8 +118,8 @@ class TextParser:
         self._rebindFieldNames_(configs)
         # Find out if the delimiter is set and use ',' by Default
         self._setDelimiter_(configs)
-        self.optionalList = []
-        self.requiredList = []
+        self.optional_list = []
+        self.required_list = []
         self.fields_collected = defaultdict(int)
         self.fields_histogram = defaultdict(int)
         # Keep track of if the field is required or optional. 
@@ -127,7 +127,7 @@ class TextParser:
         # Load and order requested fields in order of search reliability.
         self._loadRequestedFields_(configs)
         # Names of expected corpuses
-        self.corpusNames = ['street','firstName','lastName','city','branch','profile']
+        self.corpus_names = ['street','firstName','lastName','city','branch','profile']
         # The names of the corpuses and the files that contain the corpus data as values, all betted
         self.corpus_dict = {}
         self._loadCorpora_(configs)
@@ -154,38 +154,38 @@ class TextParser:
     def _findRequestedData_(self, cols: list):
         # As of Python 3.5 dicts are guaranteed to preserve key order.
         for search_field in self.requested_fields.keys():
-            whichColumnIndex = self._findDataIndex_(search_field, self.known_strategies[search_field], cols)
-            if whichColumnIndex != None:
-                self.fields_collected[search_field] = whichColumnIndex
+            which_column_index = self._findDataIndex_(search_field, self.known_strategies[search_field], cols)
+            if which_column_index != None:
+                self.fields_collected[search_field] = which_column_index
                 self.fields_histogram[search_field] += 1
     
     # Specify a new binding for field names. 
     def _rebindFieldNames_(self,configs):
-        fieldNames:dict = configs.get('fieldBindings')
-        if fieldNames != None:
-            for oldName,newName in fieldNames.items():
-                self.renameField(oldName, newName)
+        field_names:dict = configs.get('fieldBindings')
+        if field_names != None:
+            for old_name,new_name in field_names.items():
+                self.renameField(old_name, new_name)
     
     # Loads the corpora of first names, last names, and street names.
     def _loadCorpora_(self, configs):
         # Vet and Load the corpus names then match and test the associated corpus files
-        corpusDict:dict = configs.get('corpus')
-        if corpusDict == None:
+        corpus_dict:dict = configs.get('corpus')
+        if corpus_dict == None:
             raise ValueError(f"{self._messages_['missingConfig']} 'corpus'.")
         # Translate user preferred names to cononical names for corpora.
-        for corpusName in self.corpusNames:
-            for newFieldName in self._tagMap_.keys():
-                if corpusDict.get(newFieldName) != None and corpusName == self._tagMap_.get(newFieldName):
-                    self.corpus_dict[corpusName] = corpusDict.get(newFieldName)
-        for corpusName in self.corpusNames:
+        for corpus_name in self.corpus_names:
+            for newFieldName in self._tag_map_.keys():
+                if corpus_dict.get(newFieldName) != None and corpus_name == self._tag_map_.get(newFieldName):
+                    self.corpus_dict[corpus_name] = corpus_dict.get(newFieldName)
+        for corpus_name in self.corpus_names:
             try:
-                corpusFile = self.corpus_dict[corpusName]
-                if corpusFile == None:
-                    raise ValueError(f"{self._messages_['missingCorpus']} '{corpusName}'.")
-                if path.exists(corpusFile) == False:
-                    raise ValueError(f"{self._messages_['missingFile']} '{corpusFile}'.")
+                corpus_file = self.corpus_dict[corpus_name]
+                if corpus_file == None:
+                    raise ValueError(f"{self._messages_['missingCorpus']} '{corpus_name}'.")
+                if path.exists(corpus_file) == False:
+                    raise ValueError(f"{self._messages_['missingFile']} '{corpus_file}'.")
             except KeyError:
-                raise ValueError(f"{self._messages_['missingCorpus']} '{corpusName}'.")
+                raise ValueError(f"{self._messages_['missingCorpus']} '{corpus_name}'.")
         if self._debug_:
             for k,v in self.corpus_dict.items():
                 print(f"corpus dictionary {k} set to file {v}")
@@ -207,29 +207,29 @@ class TextParser:
     # Load the requested fields. 
     def _loadRequestedFields_(self, configs):
         # What are the required fields?
-        requiredList:list = configs.get('required')
-        if requiredList == None:
+        required_list:list = configs.get('required')
+        if required_list == None:
             raise ValueError(f"{self._messages_['missingRequired']}.")
-        self.requiredList = requiredList
+        self.required_list = required_list
         # What are the optional fields?
-        optionalList:list = configs.get('optional')
-        if optionalList == None:
+        optional_list:list = configs.get('optional')
+        if optional_list == None:
             # It's okay if there aren't any.
-            self.optionalList = []
+            self.optional_list = []
         # The data in columns can be unique in cases like postal codes or email addresses, but
         # other columns can have values that overlap. For example our library has someone with
         # the first name of Ave, which of course play havoc when checking for address strings.
         # One way to hedge our bets is to use a process of elemination, identify easy columns
         # early, and by process of elimination eventually identify harder types of data.
         # Check the required list and optional list 
-        for orderedField in self.preferredSearchOrder:
+        for orderedField in self.preferred_search_order:
             # if the user field match a binding they predefined continue search otherwise signal warning. 
-            for optionalField in self.optionalList:
-                if self._tagMap_.get(optionalField) != None and orderedField == self._tagMap_.get(optionalField):
+            for optionalField in self.optional_list:
+                if self._tag_map_.get(optionalField) != None and orderedField == self._tag_map_.get(optionalField):
                     self.requested_fields[orderedField] = False
             # Do this again for required fields and update any duplicate making required fields take precidence. 
-            for requiredField in self.requiredList:
-                if self._tagMap_.get(requiredField) != None and orderedField == self._tagMap_.get(requiredField):
+            for requiredField in self.required_list:
+                if self._tag_map_.get(requiredField) != None and orderedField == self._tag_map_.get(requiredField):
                     self.requested_fields[orderedField] = True
         if self._debug_:
             for k,v in self.requested_fields.items():
@@ -261,16 +261,16 @@ class TextParser:
         f = open(corpus_to_read)
         for line in f.readlines():
             corpus.append(line.lower().rstrip(os.linesep))
-        corpusSet = set(corpus)
+        corpus_set = set(corpus)
         # Free up some space for really big lists.
         corpus = []
         for idx, d in enumerate(data):
-            wordsInTheField = re.split(r'\W+',d.lower())
-            wordsInFieldSet = set(wordsInTheField)
+            words_in_the_field = re.split(r'\W+',d.lower())
+            words_in_field_set = set(words_in_the_field)
             # Set contains empty values which don't matter much
-            wordsInFieldSet.discard('')
+            words_in_field_set.discard('')
             # Logically AND the two sets and the length is great than 0 an element matches in both sets.
-            if len(corpusSet & wordsInFieldSet) > 0:
+            if len(corpus_set & words_in_field_set) > 0:
                 if idx not in self.fields_collected.values():
                     return idx
     
@@ -457,9 +457,9 @@ class TextParser:
     # Allows you to redefine field names of the incoming customer data. 
     # If you prefer 'nom' to 'firstName', this function will remap it.  
     # If the original name is not defined, no bindings are changed.
-    # param: oldName - str, original tag name, like 'email'.
-    # param: newName - str, new tag name, like 'customerEmail'.
-    def renameField(self,oldName:str='',newName:str=''):
+    # param: old_name - str, original tag name, like 'email'.
+    # param: new_name - str, new tag name, like 'customerEmail'.
+    def renameField(self,old_name:str='',new_name:str=''):
         """
         >>> config = {'corpus':{'street': 'street.txt', 'firstName': 'fname.txt', 'lastName': 'lname.txt', 
         ... 'city': 'alberta_towns.txt', 'branch': 'epl_branches.txt', 'profile' : 'user_profiles.txt'},
@@ -474,15 +474,15 @@ class TextParser:
         >>> t.getCurrentFields()
         ['userId', 'branch', 'profile', 'email', 'phone', 'birthday', 'expiry', 'province', 'country', 'city', 'gender', 'street', 'lastName', 'fooName', 'zipCode']
         """
-        if oldName != '' or newName != '':
-            if oldName in self._tagMap_.keys():
-                originalValue = self._tagMap_.pop(oldName)
-                self._tagMap_[newName] = originalValue
+        if old_name != '' or new_name != '':
+            if old_name in self._tag_map_.keys():
+                original_value = self._tag_map_.pop(old_name)
+                self._tag_map_[new_name] = original_value
 
     # Get the list of column names.
     # return: all the names of the columns as they are currently set
     def getCurrentFields(self):
-        return list(self._tagMap_.keys())
+        return list(self._tag_map_.keys())
     
     def getCorpusNames(self):
         return list(self.corpus_dict.keys())

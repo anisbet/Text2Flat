@@ -21,12 +21,45 @@ import os
 from os import path
 import re
 import datetime
+from collections import defaultdict
 #
 # This class parses the raw text file.
 class TextParser:
     # Expects the configuration dictionary and a file name to read or 
     # string of data to parse. Debug is not part of the transformation config.
     def __init__(self, configs:dict, data:str='', debug:bool=False):
+        """
+        >>> test_data = '12/31/2023, EPLSTR, EPL_VISITR, 1234-567 Ave,' 
+        >>> test_data += 'Edmonton, AB., T6G 0G4 ,1999-08-22, 21221012345678,Bisland-Jones,'
+        >>> test_data += 'example@company1.com,Harold,Customer note,(780)-555-1212,X'
+        >>> config = {'corpus':{'street': 'street.txt', 'firstName': 'fname.txt', 'lastName': 'lname.txt', 
+        ... 'city': 'alberta_towns.txt', 'branch': 'epl_branches.txt', 'profile' : 'user_profiles.txt'}}
+        >>> config['required'] = ['email', 'firstName', 'lastName', 'street', 'postalcode', 'city', 
+        ... 'province', 'phone', 'expiry', 'birthday', 'userId', 'branch', 'profile', 'speltWrong']
+        >>> config['optional'] = ['gender', 'BOGUS']
+        >>> t = TextParser(config, test_data)
+        >>> for i,d in enumerate(test_data.split(",")):
+        ...     print(f"{i}:{d}")
+        0:12/31/2023
+        1: EPLSTR
+        2: EPL_VISITR
+        3: 1234-567 Ave
+        4:Edmonton
+        5: AB.
+        6: T6G 0G4 
+        7:1999-08-22
+        8: 21221012345678
+        9:Bisland-Jones
+        10:example@company1.com
+        11:Harold
+        12:Customer note
+        13:(780)-555-1212
+        14:X
+        >>> print(f"{t.getColumnDefinitions()}")
+        {'userId': 8, 'branch': 1, 'profile': 2, 'postalcode': 6, 'email': 10, 'phone': 13, 'birthday': 7, 'expiry': 0, 'street': 3, 'province': 5, 'city': 4, 'lastName': 9, 'firstName': 11}
+        >>> t.isWellFormed()
+        True
+        """
         self._debug_ = debug
         self._messages_ = {}
         self._messages_['missingConfig'] = "**error missing configuration section"
@@ -63,8 +96,8 @@ class TextParser:
         self.known_strategies['postalcode'] = re.compile(r'^[a-zA-Z]\d[a-zA-Z](\s{1,})?\d[a-zA-Z]\d$')
         self.known_strategies['email'] = re.compile(r'^(\w|\.|\_|\-)+[@](\w|\_|\-|\.)+[.]\w{2,3}$')
         self.known_strategies['phone'] = re.compile(r'^(\+)?(\()?\d{3}(-| |\)(\s|-)?)?\d{3}(-| )?\d{4}$')
-        self.known_strategies['birthday'] = self._getRequestedDate_
-        self.known_strategies['expiry'] = self._getRequestedDate_
+        self.known_strategies['birthday'] = self.getRequestedDate
+        self.known_strategies['expiry'] = self.getRequestedDate
         self.known_strategies['country'] = re.compile(r'^(CA|Canada)')
         self.known_strategies['province'] = re.compile(r'^(NL|PE|NS|NB|QC|ON|MB|SK|AB|BC|YT|NT|NU)')
         self.known_strategies['street'] = self._corpusCompare_
@@ -87,17 +120,45 @@ class TextParser:
         self._setDelimiter_(configs)
         self.optionalList = []
         self.requiredList = []
+        self.fields_collected = defaultdict(int)
+        self.fields_histogram = defaultdict(int)
         # Keep track of if the field is required or optional. 
-        self.requestedFields = {}
+        self.requested_fields = {}
         # Load and order requested fields in order of search reliability.
         self._loadRequestedFields_(configs)
         # Names of expected corpuses
         self.corpusNames = ['street','firstName','lastName','city','branch','profile']
         # The names of the corpuses and the files that contain the corpus data as values, all betted
-        self.corpusDictionary = {}
+        self.corpus_dict = {}
         self._loadCorpora_(configs)
-        # TODO: Create customers JSON and control output of flat files.
+        # Determine which fields are which. 
+        self.total_records = 0
+        self.success_threshold = 90.0
+        if path.isfile(data):
+            line_no = 0
+            with open(data) as f:
+                for line in f:
+                    self.total_records += 1
+                    cols = line.split(self.delimiter)
+                    if self.total_records <= 6 and this._debug_ == True:
+                        print(line)
+                    self._findRequestedData_(cols)
+        else: # not a file, but a list of data
+            self.total_records += 1
+            cols = data.split(self.delimiter)
+            self._findRequestedData_(cols)
 
+    # Tries to match requested fields with known strategies for finding those fields.
+    # param: cols - a list of data strings from an arbitrary but specific record.
+    # retrun: Nothing, but a
+    def _findRequestedData_(self, cols: list):
+        # As of Python 3.5 dicts are guaranteed to preserve key order.
+        for search_field in self.requested_fields.keys():
+            whichColumnIndex = self._findDataIndex_(search_field, self.known_strategies[search_field], cols)
+            if whichColumnIndex != None:
+                self.fields_collected[search_field] = whichColumnIndex
+                self.fields_histogram[search_field] += 1
+    
     # Specify a new binding for field names. 
     def _rebindFieldNames_(self,configs):
         fieldNames:dict = configs.get('fieldBindings')
@@ -115,10 +176,10 @@ class TextParser:
         for corpusName in self.corpusNames:
             for newFieldName in self._tagMap_.keys():
                 if corpusDict.get(newFieldName) != None and corpusName == self._tagMap_.get(newFieldName):
-                    self.corpusDictionary[corpusName] = corpusDict.get(newFieldName)
+                    self.corpus_dict[corpusName] = corpusDict.get(newFieldName)
         for corpusName in self.corpusNames:
             try:
-                corpusFile = self.corpusDictionary[corpusName]
+                corpusFile = self.corpus_dict[corpusName]
                 if corpusFile == None:
                     raise ValueError(f"{self._messages_['missingCorpus']} '{corpusName}'.")
                 if path.exists(corpusFile) == False:
@@ -126,7 +187,7 @@ class TextParser:
             except KeyError:
                 raise ValueError(f"{self._messages_['missingCorpus']} '{corpusName}'.")
         if self._debug_:
-            for k,v in self.corpusDictionary.items():
+            for k,v in self.corpus_dict.items():
                 print(f"corpus dictionary {k} set to file {v}")
 
     # Set the delimiter used as field separators.
@@ -134,6 +195,14 @@ class TextParser:
         delim:str = configs.get('delimiter')
         if delim != None:
             self.delimiter = delim
+    
+    # Set the success threshold.
+    def _setThreshold_(self, configs):
+        threshold:int = configs.get('threshold')
+        if threshold != None:
+            self.success_threshold = threshold
+        else:
+            self.success_threshold = 90.0
 
     # Load the requested fields. 
     def _loadRequestedFields_(self, configs):
@@ -157,21 +226,34 @@ class TextParser:
             # if the user field match a binding they predefined continue search otherwise signal warning. 
             for optionalField in self.optionalList:
                 if self._tagMap_.get(optionalField) != None and orderedField == self._tagMap_.get(optionalField):
-                    self.requestedFields[orderedField] = False
+                    self.requested_fields[orderedField] = False
             # Do this again for required fields and update any duplicate making required fields take precidence. 
             for requiredField in self.requiredList:
                 if self._tagMap_.get(requiredField) != None and orderedField == self._tagMap_.get(requiredField):
-                    self.requestedFields[orderedField] = True
+                    self.requested_fields[orderedField] = True
         if self._debug_:
-            for k,v in self.requestedFields.items():
+            for k,v in self.requested_fields.items():
                 print(f"requested fields (in order) {k} => {v}")
+
+    # Populates both the collected_fields dictionary and the fields' histogram dictionary.
+    # param: String name of the field to try and identify, like 'pcode'.
+    # param: Regular expression string used to determine the requested data.
+    # param: data - list of strings from a given record.
+    # return: int - Column position where the data matches, or None if the search was unsuccessful.
+    def _findDataIndex_(self,field:str, strategy, data:str):
+        if callable(strategy):
+            return strategy(data,field)
+        else: # Function
+            for position, d in enumerate(data):
+                if re.match(strategy, d.strip()):
+                    return position
         
     # A fast way to tell if an enormous corpus has words that can be found in an arbitrary
     # but specific field is to convert the field to a set of words, then find the intersection
     # with the set of the corpus. If there is more than one successful match a word in the corpus
     # matched a word in the field.
     def _corpusCompare_(self, data: list, field: str):
-        corpus_to_read = corpus_dict[field]
+        corpus_to_read = self.corpus_dict[field]
         if corpus_to_read == None:
             print(f"don't know how to read a corpus for '{field}'")
             return -1
@@ -195,8 +277,25 @@ class TextParser:
     # Searches a given line from data and determines the index of either a birthday or expiry.
     # param: data - list of customer data read from source. 
     # param: field - string name of the field of search. Either birth date or expiry date are 
-    #  currently supported. 
-    def _getRequestedDate_(self, data:list, field:str):
+    #  currently supported. Note that birthday and expiry are the connonical internal names
+    #  for these fields, not the names used by the user.
+    # return: Integer of the 0-based index of the field in that contains the requested field. 
+    #  If the requested field is not found, -1 is returned. 
+    def getRequestedDate(self, data:list, field:str):
+        """
+        >>> config = {'corpus':{'street': 'street.txt', 'firstName': 'fname.txt', 'lastName': 'lname.txt', 
+        ... 'city': 'alberta_towns.txt', 'branch': 'epl_branches.txt', 'profile' : 'user_profiles.txt'},
+        ... 'required': ['firstName', 'lastName', 'street', 'postalcode'],
+        ... 'optional': ['gender']
+        ... }
+        >>> t = TextParser(config)
+        >>> t.getRequestedDate(["2023-01-01","Howard","Johnson","1963/08/22"], 'birthday') 
+        3
+        >>> t.getRequestedDate(["2023-01-01","Howard","Johnson","1963/08/22"], 'expiry') 
+        0
+        >>> t.getRequestedDate(["12345 75 Ave.","Howard","Johnson","Texas"], 'birthday') 
+        -1
+        """
         for idx, d in enumerate(data):
             if field == 'birthday':
                 if self.isBirthDate(d):
@@ -204,6 +303,7 @@ class TextParser:
             if field == 'expiry':
                 if self.isExpiry(d):
                     return idx
+        return -1
 
     # Tests if a string is likely to be an expiry date.
     # return: True if the date is sometime in the future, and false otherwise.
@@ -385,10 +485,54 @@ class TextParser:
         return list(self._tagMap_.keys())
     
     def getCorpusNames(self):
-        return list(self.corpusDictionary.keys())
+        return list(self.corpus_dict.keys())
 
     def getCorpusFiles(self):
-        return list(self.corpusDictionary.values())
+        return list(self.corpus_dict.values())
+
+    # return: histogram of each field.
+    def histogram(self):
+        return self.fields_histogram
+    
+    def getColumnDefinitions(self):
+        return dict(self.fields_collected)
+    
+    # Report if the input data was well formed, that is, are the requested columns 
+    # present and well represented in the supplied data.
+    # param: none.
+    # return: True if all the requested requested_fields are present and at least 'n'% of 
+    # records are populated with valid data, and false otherwise.
+    def isWellFormed(self):
+        if len(self.fields_collected) < len(self.requested_fields.keys()):
+            missing_fields = []
+            for r_field in self.requested_fields.keys():
+                # Only required fields are checked for missing values.
+                if r_field in self.fields_collected.keys():
+                    continue
+                else:
+                    if self.requested_fields.get(r_field) == True:
+                        missing_fields.append(r_field)
+            if len(missing_fields) > 0:
+                print(f"failed to find the following required field(s): {missing_fields}")
+                return False
+        # Report which fields failed to measure up.
+        errors = 0
+        for field, count in self.fields_histogram.items():
+            # print(f"count: {count}, total_records: {self.total_records}, success_threshold: {self.success_threshold}")
+            # Record errors for required fields only.
+            if self.requested_fields.get(field) == True:
+                if self.total_records < 1:
+                    print(f"no records read")
+                    return False
+                frequency = count / self.total_records
+                if frequency < self.success_threshold / 100:
+                    print("'{0}' requires {1}% valid values but found only {2:.3g}%.".format(field,self.success_threshold,(frequency * 100.0)))
+                    errors += 1
+        return errors == 0
+    
+    def __str__(self):
+        for k,v in self.field_histogram.items():
+            print(f"index: {self.fields_collected[k]}, {k} -> {v}")
 
 if __name__ == '__main__':
     import doctest
